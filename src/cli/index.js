@@ -7,36 +7,16 @@ Author : indaam@gmail.com || indaam
 const fs = require('fs');
 const FN = require('../utils/fn.js');
 const base64 = require('../utils/base64');
+const createVars = require('../utils/vars');
 
-const dir = () => {
-  const root = String(process.cwd()).replace(/\s/g, '// ');
-  const current = String(__dirname).replace(/\s/g, '// ');
-  const module = root + '/node_modules/react-native-secret-config';
-  return {
-    root,
-    current,
-    module
-  };
-};
-
-const DIR = dir();
-
-const FILE = {
-  iosFile: 'ios/SecretConfig.m',
-  androidFile:
-    'android/src/main/java/com/indaam/secretconfig/SecretConfigModule.java'
-};
-
-const config = {
-  configFile: 'secret-config.json',
-  envFile: '.env',
-  hash: true,
-  env: false
-};
+const variable = createVars(process/* is global variable in node */);
 
 class SecretConfig {
-  constructor() {
+  constructor(variable) {
     this.regex = /\/\*\sstart\sconfig\s\*\/(.|\n)+(\/\*\send\sconfig\s\*\/)/gi;
+    this.vars = variable;
+    this.FN = FN;
+    this.base64 = base64;
   }
 
   envToObject(data) {
@@ -57,12 +37,14 @@ class SecretConfig {
     try {
       return fs.readFileSync(path, 'utf8');
     } catch (error) {
+      console.log(error && error.message);
       return null;
     }
   }
 
   createSecretConfigStr(str, config) {
-    if (config.hash) {
+    const { base64 } = this;
+    if (config.useBase64) {
       return base64.btoa(JSON.stringify(str));
     }
     return JSON.stringify(str).replace(/\"/g, '\\"');
@@ -70,40 +52,56 @@ class SecretConfig {
 
   writeConfig(config, os) {
     const { regex } = this;
+    const { nativeFile, directory } = this.vars;
 
-    const secretConfig = this.getSecretConfig(config);
-    const secretConfigStr = this.createSecretConfigStr(secretConfig, config);
+    try {
 
-    const fileLocation = os === 'ios' ? FILE.iosFile : FILE.androidFile;
-    const extraContent = os === 'ios' ? '@' : '';
+      const secretConfig = this.getSecretConfig(config);
+      const secretConfigStr = this.createSecretConfigStr(secretConfig, config);
 
-    const file = `${DIR.module}/${fileLocation}`;
-    let fileContent = fs.readFileSync(file, 'utf8');
+      const fileLocation = os === 'ios' ? nativeFile.ios : nativeFile.android;
+      const extraContent = os === 'ios' ? '@' : '';
 
-    fileContent = fileContent.replace(regex, function(res) {
-      return `/* start config */return ${extraContent}"${secretConfigStr}";/* end config */`;
-    });
+      const file = `${directory.module}/${fileLocation}`;
+      let fileContent = fs.readFileSync(file, 'utf8');
 
-    fs.writeFileSync(file, fileContent, 'utf8');
-    return console.log('Succress write to', os);
+      fileContent = fileContent.replace(regex, function(res) {
+        return `/* start config */return ${extraContent}"${secretConfigStr}";/* end config */`;
+      });
+
+      fs.writeFileSync(file, fileContent, 'utf8');
+      return console.log('Succress write to', os);
+
+    } catch (error) {
+      throw error
+    }
+
   }
 
   getSecretConfig(config) {
-    const secretConfigPath = `${DIR.root}/${config.configFile}`;
+    const { nativeFile, directory } = this.vars;
+
+    const secretConfigPath = `${directory.root}/${config.configFileName}`;
     const secretConfigContent = this.getFileContent(secretConfigPath);
 
-    const envPath = `${DIR.root}/${config.envFile}`;
+    const envPath = `${directory.root}/${config.envFileName}`;
     const envContent = this.getFileContent(envPath);
 
     const secretConfigObj = JSON.parse(secretConfigContent);
-    const envObj = (config && config.env && this.envToObject(envContent)) || {};
+    const envObj = (config && config.includeEnv && this.envToObject(envContent)) || {};
 
     return { ...secretConfigObj, ...envObj };
   }
 
   getConfig() {
-    const args = FN.getOptionParam(process.argv);
-    return { ...config, ...args };
+    const { FN } = this;
+    const { base } = this.vars;
+    const args = FN.getOptionParam(process && process.argv);
+    if(args && args.includeEnv){
+      args["envFileName"] = args.includeEnv;
+      args["includeEnv"] = !!args.includeEnv;
+    }
+    return { ...base, ...args };
   }
 
   init() {
@@ -113,5 +111,5 @@ class SecretConfig {
   }
 }
 
-const appConfig = new SecretConfig();
+const appConfig = new SecretConfig(variable);
 appConfig.init();
